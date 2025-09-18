@@ -1,0 +1,262 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../lib/framework'
+
+class FrameworkCLI
+  def initialize(args)
+    @args = args
+    @command = args[0]
+  end
+
+  def run
+    case @command
+    when 'new'
+      create_new_app(@args[1])
+    when 'generate', 'g'
+      generate_component(@args[1], @args[2])
+    when 'server', 's'
+      start_server
+    when 'version', '-v', '--version'
+      puts Framework::VERSION
+    when 'help', '-h', '--help', nil
+      show_help
+    else
+      puts "Unknown command: #{@command}"
+      show_help
+      exit 1
+    end
+  end
+
+  private
+
+  def create_new_app(name)
+    if name.nil?
+      puts 'Please provide an application name'
+      exit 1
+    end
+
+    puts "Creating new Framework application: #{name}"
+    
+    # Create directory structure
+    directories = [
+      name,
+      "#{name}/app",
+      "#{name}/app/controllers",
+      "#{name}/app/models",
+      "#{name}/app/views",
+      "#{name}/config",
+      "#{name}/public",
+      "#{name}/spec"
+    ]
+
+    directories.each do |dir|
+      FileUtils.mkdir_p(dir)
+      puts "  create  #{dir}/"
+    end
+
+    # Create basic files
+    create_file("#{name}/Gemfile", gemfile_content)
+    create_file("#{name}/config.ru", config_ru_content)
+    create_file("#{name}/config/application.rb", application_config_content)
+    create_file("#{name}/app/controllers/application_controller.rb", application_controller_content)
+    
+    puts "\nFramework application '#{name}' created successfully!"
+    puts "\nNext steps:"
+    puts "  cd #{name}"
+    puts "  bundle install"
+    puts "  framework server"
+  end
+
+  def generate_component(type, name)
+    case type
+    when 'controller'
+      generate_controller(name)
+    when 'model'
+      generate_model(name)
+    else
+      puts "Unknown generator: #{type}"
+      puts "Available generators: controller, model"
+    end
+  end
+
+  def generate_controller(name)
+    controller_name = "#{name.downcase}_controller"
+    file_path = "app/controllers/#{controller_name}.rb"
+    
+    create_file(file_path, controller_template(name))
+    puts "Controller generated: #{file_path}"
+  end
+
+  def generate_model(name)
+    model_name = name.downcase
+    file_path = "app/models/#{model_name}.rb"
+    
+    create_file(file_path, model_template(name))
+    puts "Model generated: #{file_path}"
+  end
+
+  def start_server
+    puts 'Starting Framework development server...'
+    if File.exist?('config.ru')
+      exec 'rackup config.ru'
+    else
+      puts 'No config.ru file found. Are you in a Framework application directory?'
+      exit 1
+    end
+  end
+
+  def show_help
+    puts <<~HELP
+      Framework CLI - A Ruby web framework
+
+      Usage: framework COMMAND [ARGS]
+
+      Commands:
+        new APP_NAME              Create a new Framework application
+        generate TYPE NAME        Generate components (controller, model)
+        server                    Start the development server
+        version                   Show Framework version
+        help                      Show this help message
+
+      Examples:
+        framework new my_app
+        framework generate controller users
+        framework generate model user
+        framework server
+    HELP
+  end
+
+  def create_file(path, content)
+    File.write(path, content)
+    puts "  create  #{path}"
+  end
+
+  def gemfile_content
+    <<~GEMFILE
+      source 'https://rubygems.org'
+
+      gem 'framework', path: '../'
+      gem 'rack', '~> 3.0'
+      gem 'puma', '~> 6.0'
+
+      group :development do
+        gem 'rerun', '~> 0.14'
+      end
+    GEMFILE
+  end
+
+  def config_ru_content
+    <<~CONFIG_RU
+      require_relative 'config/application'
+
+      run Application.new
+    CONFIG_RU
+  end
+
+  def application_config_content
+    <<~APPLICATION_CONFIG
+      require 'framework'
+      require_relative '../app/controllers/application_controller'
+
+      class Application < Framework::Application
+        def initialize
+          super
+          load_controllers
+          configure_routes
+        end
+
+        private
+
+        def load_controllers
+          Dir['app/controllers/*.rb'].each { |file| require_relative "../\#{file}" }
+        end
+
+        def configure_routes
+          Framework.routes do
+            get '/', to: 'application#index'
+          end
+        end
+      end
+    APPLICATION_CONFIG
+  end
+
+  def application_controller_content
+    <<~APPLICATION_CONTROLLER
+      class ApplicationController < Framework::Controller
+        def index
+          response.write('Welcome to your Framework application!')
+          response.finish
+        end
+      end
+    APPLICATION_CONTROLLER
+  end
+
+  def controller_template(name)
+    class_name = name.split('_').map(&:capitalize).join + 'Controller'
+    <<~CONTROLLER
+      class #{class_name} < ApplicationController
+        def index
+          render_json({ message: 'Hello from #{class_name}' })
+        end
+
+        def show
+          id = params['id']
+          render_json({ id: id, message: 'Show action' })
+        end
+
+        def create
+          render_json({ message: 'Created successfully' })
+        end
+
+        def update
+          id = params['id']
+          render_json({ id: id, message: 'Updated successfully' })
+        end
+
+        def destroy
+          id = params['id']
+          render_json({ id: id, message: 'Deleted successfully' })
+        end
+      end
+    CONTROLLER
+  end
+
+  def model_template(name)
+    class_name = name.split('_').map(&:capitalize).join
+    <<~MODEL
+      class #{class_name}
+        attr_accessor :id, :created_at, :updated_at
+
+        def initialize(attributes = {})
+          attributes.each do |key, value|
+            send("\#{key}=", value) if respond_to?("\#{key}=")
+          end
+          @created_at ||= Time.now
+        end
+
+        def save
+          @updated_at = Time.now
+          # Implementation for saving to database
+          self
+        end
+
+        def self.find(id)
+          # Implementation for finding by ID
+          new(id: id)
+        end
+
+        def self.all
+          # Implementation for finding all records
+          []
+        end
+      end
+    MODEL
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  require 'fileutils'
+  cli = FrameworkCLI.new(ARGV)
+  cli.run
+end
